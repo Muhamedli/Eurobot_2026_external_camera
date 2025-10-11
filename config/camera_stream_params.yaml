@@ -1,0 +1,8 @@
+camera_stream_params:
+  pixel_format: 'BayerRG8'
+  width: 3072
+  height: 2048
+  fps: 60.0
+  auto_exposure: [32, 16500]
+  auto_gain: [0.0, 23.5]
+  black_level: 200

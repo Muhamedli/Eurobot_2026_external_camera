@@ -1,0 +1,17 @@
+# Engi-Teams_ChArUco_board
+ChArUco_board:
+  width: 9
+  height: 6
+  square_size: 0.066
+  marker_size: 0.049
+  dict_id: 5
+  legacy_pattern: True
+
+# Work_ChArUco_board
+# ChArUco_board:
+#   width: 9
+#   height: 6
+#   square_size: 0.04
+#   marker_size: 0.03
+#   dict_id: 5
+#   legacy_pattern: True
