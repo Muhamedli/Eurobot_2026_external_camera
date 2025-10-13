@@ -42,5 +42,7 @@
 
 # Folders
 /calibration/calibration_dataset/*
+/calibration/ros2_bag_calibration_dataset/*
 /hikrobot_img
 /img_archive
+__pycache__/

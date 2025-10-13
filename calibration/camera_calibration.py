@@ -3,12 +3,15 @@ import numpy as np
 import os
 import yaml
 from datetime import datetime
+from bag_parser import parse_random_images_from_bag
 
 
 # ========================== Calibration configuration ==========================
-DISPLAY_DETECTED_MARKERS = False  # True - отображение original img с маркерами
-DISPLAY_UNDISTORTED = False  # True - отображение undistorted img для radtan/KB
-USE_8_COEFFS = False  # True - 8 коэффициентов radtan, False - 5 коэффициентов
+DISPLAY_DETECTED_MARKERS = True  # True - display original images with markers
+DISPLAY_UNDISTORTED = True  # True - display undistorted images for radtan/KB
+USE_8_COEFFS = False  # True - 8 coeffs radtan, False - 5 coeffs
+USING_ROS2_BAG = False # Camera calibration with images from ros2 bag
+TOPIC_TO_PARSE = {"/zedxone/right/image/compressed"} # Camera topic
 # ===============================================================================
 
 # ============================= Directory paths =================================
@@ -16,6 +19,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 intrinsics_path = os.path.join(script_dir, 'intrinsics/intrinsics.yaml')
 ChArUco_board_path = os.path.join(script_dir, 'config/ChArUco_board.yaml')
 calibration_dataset_path = os.path.join(script_dir, 'calibration_dataset')
+bag_file_path = "/mnt/foundation_ssd/foundation_data/recorded_data/bags/2025-10-13-sensorbox-1-cameras"
 # ===============================================================================
 
 # =============== Reading the parameters of the calibration board ===============
@@ -33,8 +37,8 @@ LEGACY_PATTERN = board_params['legacy_pattern']
 
 # ======================= Setting up the marker detector ========================
 aruco_dict_map = {
-    4: cv2.aruco.DICT_4X4_250,
-    5: cv2.aruco.DICT_5X5_250
+    4: cv2.aruco.DICT_4X4_100,
+    5: cv2.aruco.DICT_5X5_100
 }
 
 if ARUCO_DICT_NAME not in aruco_dict_map:
@@ -51,7 +55,10 @@ print(f"ChArUco_board params:\nSQUARES_X={SQUARES_X}\nSQUARES_Y={SQUARES_Y}\nSQU
 # ===============================================================================
 
 # ========================================== Loading images for calibration ===========================================
-images = [os.path.join(calibration_dataset_path, f) for f in os.listdir(calibration_dataset_path) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
+if USING_ROS2_BAG:
+    images = parse_random_images_from_bag(bag_file_path, TOPIC_TO_PARSE, num_images=50, input_dir=script_dir)
+else:
+    images = [os.path.join(calibration_dataset_path, f) for f in os.listdir(calibration_dataset_path) if f.lower().endswith(('.jpg', '.png', '.jpeg'))]
 
 all_charuco_corners = []
 all_charuco_ids = []
@@ -225,4 +232,4 @@ if kb_success:
 with open(intrinsics_path, 'w') as file:
     yaml.dump(data, file, default_flow_style=None)
 
-print(f"\nThe calibration results are recorded in {intrinsics_path}")
+print(f"\nThe calibration results are saved in {intrinsics_path}")
