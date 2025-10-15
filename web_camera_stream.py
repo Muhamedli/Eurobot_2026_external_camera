@@ -1,5 +1,7 @@
 import cv2
 import os
+from collections import deque
+
 
 # Camera params
 camera_params = {
@@ -11,7 +13,7 @@ camera_params = {
 
 # Flag for recording the calibration dataset (snapshot by pressing the "s" key)
 RECORD_DATASET = False
-DICTIONARY = cv2.aruco.DICT_4X4_1000
+DICTIONARY = cv2.aruco.DICT_4X4_250
 
 aruco_dict = cv2.aruco.getPredefinedDictionary(DICTIONARY)
 parameters = cv2.aruco.DetectorParameters()
@@ -28,6 +30,19 @@ cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*camera_params['format']))
 
 # Image name index
 count = 0
+
+# Initializing a queue for storing frame time
+frame_times = deque(maxlen=6)
+
+
+def calculate_avg_fps(start_time, end_time):
+
+    frame_times.append((end_time - start_time) / cv2.getTickFrequency())
+    
+    return len(frame_times) / sum(frame_times)
+
+
+start_timestamp = cv2.getTickCount()
 
 while True:
 
@@ -48,6 +63,13 @@ while True:
 
     if key == ord('q'):
         break
+
+    # ================================== fps counter ==================================
+    end_timestamp = cv2.getTickCount()
+    main_fps = calculate_avg_fps(start_timestamp, end_timestamp)
+    start_timestamp = cv2.getTickCount()
+    print(f"Aruco detection fps: {main_fps:.1f} Hz")
+    # =================================================================================
 
     if RECORD_DATASET:
         if key == ord('s'):
