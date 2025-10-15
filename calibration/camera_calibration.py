@@ -80,7 +80,7 @@ for image_path in images:
         charuco_detector = cv2.aruco.CharucoDetector(board)
         charuco_corners, charuco_ids, marker_corners, marker_ids = charuco_detector.detectBoard(gray)
         
-        if charuco_corners is not None and charuco_ids is not None and len(charuco_corners) > 4:
+        if charuco_corners is not None and charuco_ids is not None and len(charuco_corners) > 30:
             all_charuco_corners.append(charuco_corners)
             all_charuco_ids.append(charuco_ids)
             print(f"{len(charuco_corners)} points found in image: {os.path.basename(image_path)}")
