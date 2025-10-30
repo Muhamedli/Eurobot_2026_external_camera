@@ -7,8 +7,6 @@ from cvf import Camera, HarvesterCamera
 from collections import deque
 
 
-# Flag for recording the calibration dataset (snapshot by pressing the "s" key)
-RECORD_DATASET = False
 ARUCO_DETECT = False
 FAST_ARUCO_DETECT = False
 RECORD_DATASET = False # Flag for recording the calibration dataset (snapshot by pressing the "s" key)
@@ -47,8 +45,7 @@ with open(camera_stream_params_path, 'r') as f:
 
 camera_stream_params = camera_config['camera_stream_params']
 PIXEL_FORMAT = camera_stream_params['pixel_format']
-WIDTH = camera_stream_params['width']
-HEIGHT = camera_stream_params['height']
+RESOLUTION = camera_stream_params['resolution']
 FPS = camera_stream_params['fps']
 AUTO_EXPOSURE = camera_stream_params['auto_exposure']
 AUTO_GAIN = camera_stream_params['auto_gain']
