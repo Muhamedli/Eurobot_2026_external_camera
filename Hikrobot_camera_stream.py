@@ -32,7 +32,7 @@ camera_stream_params_path = os.path.join(script_dir, 'config/camera_stream_param
 # ===============================================================================
 
 # ======================== Configs for robot tracking ===========================
-team = "yellow"
+team = "blue"
 # team_enemy = "blue"
 camera_our = Camera(camera_stream_params_path, team)
 # camera_enemy = Camera(camera_stream_params_path, team_enemy)
@@ -53,7 +53,7 @@ BLACK_LEVEL = camera_stream_params['black_level']
 # ===============================================================================
 
 # Initializing a queue for storing frame time
-frame_times = deque(maxlen=6)
+frame_times = deque(maxlen=10)
 tvec_history = deque(maxlen=10)
 
 def calculate_avg_fps(start_time, end_time):
@@ -181,6 +181,8 @@ def aruco_detect_in_roi(image, roi_size, roi_center_aruco_list):
 
 def main():
     try:
+        count = 0
+        
         cv2.namedWindow("Camera stream", cv2.WINDOW_NORMAL)
 
         start_timestamp = cv2.getTickCount()
@@ -242,17 +244,19 @@ def main():
                 points_robot = np.array([
                     [0.035, 0.035, 0.0], [-0.035, 0.035, 0], [-0.035, -0.035, 0], [0.035, -0.035, 0],
                     [0.05, 0.025, -0.03], [0.05, 0.025, -0.08], [0.05, -0.025, -0.08], [0.05, -0.025, -0.03]
-                    ], dtype=np.float32)
+                    ], dtype=np.float64)
 
                 if results is not None:
                     tvec = results[0]
-                    # print(f"Our robot: x={tvec[0]:.4f}, y={tvec[1]:.4f}, z={tvec[2]:.4f}")
-                    cv2.aruco.drawDetectedMarkers(display_img, results[3], results[4], (0, 0, 255))
-                    display_img = camera_our.project_field_and_robot_to_image(display_img, points_robot)
                     means, stds = cvf.calculate_moving_stats(tvec, tvec_history)
-                    print(f"x={means[0]:.4f}, y={means[1]:.4f}, z={means[2]:.4f}")
-                    print(f"sigma_x={stds[0]:.4f}, sigma_y={stds[1]:.4f}, sigma_z={stds[2]:.4f}")
+
+                    display_img = camera_our.project_field_and_robot_to_image(display_img, points_robot)
+                    cv2.aruco.drawDetectedMarkers(display_img, results[3], results[4], (0, 0, 255))
+
                     np.set_printoptions(linewidth=300)
+                    print(f"raw: x={tvec[0]:.4f}, y={tvec[1]:.4f}, z={tvec[2]:.4f}")
+                    print(f"mean x={means[0]:.4f}, y={means[1]:.4f}, z={means[2]:.4f}")
+                    print(f"sigma_x={stds[0]:.4f}, sigma_y={stds[1]:.4f}, sigma_z={stds[2]:.4f}")
                     print("Covariance matrix:\n", results[2])
 
                 # if results_enemy is not None:

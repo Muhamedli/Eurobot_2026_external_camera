@@ -88,7 +88,6 @@ def compute_pose_covariance(object_points, image_points, rvec, tvec,
     Sigma_pose = np.linalg.inv(H)
     return Sigma_pose
 
-
 def transform_covariance_SE3(Sigma_source, R_src_dst, t_src_dst):
     """
     Перенос ковариации SE3 через преобразование T=[R,t].
@@ -203,7 +202,7 @@ class Camera:
                         [marker_size/2, marker_size/2, 0],
                         [marker_size/2, -marker_size/2, 0],
                         [-marker_size/2, -marker_size/2, 0]
-                    ], dtype=np.float32) + self.field_markers[mid]
+                    ], dtype=np.float64) + self.field_markers[mid]
                     object_points.extend(obj_pts)
                     image_points.extend(corners_set)
 
@@ -300,8 +299,8 @@ class Camera:
                 return None, None, None # Маркер потерян
             
             n_markers = len(corners)
-            corners_flat = np.concatenate(corners, axis=0).reshape(-1, 2)
-            corners_flat += offset # Корректируем координаты, если поиск был в ROI
+            corners_flat = np.concatenate(corners, axis=0).reshape(-1, 2).astype(np.float64)
+            corners_flat += np.array(offset, dtype=np.float64)
             corners = corners_flat.reshape(n_markers, 1, 4, 2)
             
             top_aruco_corners = corners[target_indices[0]][0]
@@ -331,7 +330,7 @@ class Camera:
             obj_pts = np.array([
                 [-marker_length/2, marker_length/2, 0], [marker_length/2, marker_length/2, 0],
                 [marker_length/2, -marker_length/2, 0], [-marker_length/2, -marker_length/2, 0]
-            ], dtype=np.float32)
+            ], dtype=np.float64)
             if mid in self.RotSideDict:
                 obj_pts = np.dot(obj_pts, self.RotSideDict[mid].T) - self.TvecSideDict[mid]
             object_points.extend(obj_pts)
@@ -352,10 +351,27 @@ class Camera:
         self.robot_rot_matrix = np.dot(self.tmatrix_field.T, rot_matrix)
         quat = R.from_matrix(self.robot_rot_matrix).as_quat()
 
-        # Расчет ковариации позы (закоментить и проверить скорость)
-        _, jac = cv2.projectPoints(np.array(object_points), rvec, tvec, self.camera_matrix, self.dist_coefs)
-        J = jac[:, :6]
-        cov = np.linalg.pinv(J.T @ J) * 1.0
+        # Рассчитываем ковариацию в системе координат камеры
+        Sigma_cam = compute_pose_covariance(
+            object_points=np.array(object_points), 
+            image_points=np.array(image_points), 
+            rvec=rvec, 
+            tvec=tvec,
+            camera_matrix=self.camera_matrix, 
+            dist_coeffs=self.dist_coefs, 
+            sigma_pix=1.0
+        )
+        
+        # Переносим ковариацию в систему координат поля (SE(3) transformation)                
+        R_field_to_cam = self.tmatrix_field.T
+        t_field_to_cam = - R_field_to_cam @ self.tvec_cam_to_field.reshape(3, 1)
+
+        # Применяем формулу переноса ковариации
+        cov = transform_covariance_SE3(
+            Sigma_cam, 
+            R_field_to_cam, 
+            t_field_to_cam
+        )
 
         return self.robot_tvec, quat, cov
 
@@ -386,14 +402,14 @@ class Camera:
         # Объединяем переносы: t_cam_robot = R_cam_field * t_field_robot + t_cam_field
         t_cam_robot = (self.tmatrix_field @ tvec_field_robot_col) + tvec_cam_field_col
 
-        # --- 2. Проецирование ---
+        # Проецирование
         # Преобразуем итоговую матрицу вращения R_cam_robot обратно в rvec
         # для использования в cv2.projectPoints
         rvec_cam_robot, _ = cv2.Rodrigues(R_cam_robot)
 
         # Убедимся, что входные точки имеют правильный тип и форму
         # cv2.projectPoints ожидает (N, 3) или (N, 1, 3) и тип float64
-        points_robot_np = np.asarray(points_robot, dtype=np.float32).reshape(-1, 3)
+        points_robot_np = np.asarray(points_robot, dtype=np.float64).reshape(-1, 3)
 
         # Проецируем точки, используя объединенное преобразование
         image_points, _ = cv2.projectPoints(
