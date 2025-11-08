@@ -153,6 +153,20 @@ class Camera:
             22: np.array([-0.9, -0.4, 0.0]),
             23: np.array([0.9, -0.4, 0.0])
         }
+        
+        self.field_marker_size = 0.1
+
+        # Координаты углов маркеров поля
+        self.field_marker_obj_pts = {}
+        base_pts = np.array([
+            [-self.field_marker_size/2, self.field_marker_size/2, 0],
+            [self.field_marker_size/2, self.field_marker_size/2, 0],
+            [self.field_marker_size/2, -self.field_marker_size/2, 0],
+            [-self.field_marker_size/2, -self.field_marker_size/2, 0]
+        ], dtype=np.float64)
+
+        for mid, tvec in self.field_markers.items():
+            self.field_marker_obj_pts[mid] = base_pts + tvec
 
         # Состояние инициализации положения камеры
         self.pose_initialized = False
@@ -193,22 +207,19 @@ class Camera:
                     print(f"Detected {len(field_ids)} markers out of 4")
                     continue
 
-                marker_size = 0.1
                 object_points, image_points = [], []
 
                 for mid, corners_set in zip(field_ids, field_corners):
-                    obj_pts = np.array([
-                        [-marker_size/2, marker_size/2, 0],
-                        [marker_size/2, marker_size/2, 0],
-                        [marker_size/2, -marker_size/2, 0],
-                        [-marker_size/2, -marker_size/2, 0]
-                    ], dtype=np.float64) + self.field_markers[mid]
-                    object_points.extend(obj_pts)
+                    object_points.extend(self.field_marker_obj_pts[mid])
                     image_points.extend(corners_set)
 
                 success, rvec, tvec = cv2.solvePnP(
                     np.array(object_points), np.array(image_points), 
-                    self.camera_matrix, self.dist_coefs, flags=cv2.SOLVEPNP_SQPNP)
+                    self.camera_matrix, self.dist_coefs, flags=cv2.SOLVEPNP_IPPE)
+                
+                success, rvec, tvec = cv2.solvePnP(
+                    np.array(object_points), np.array(image_points),
+                    self.camera_matrix, self.dist_coefs, rvec, tvec, useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
 
                 if success:
                     tmatrices.append(cv2.Rodrigues(rvec)[0])
@@ -328,9 +339,12 @@ class Camera:
             else: marker_length = 0.05
             
             obj_pts = np.array([
-                [-marker_length/2, marker_length/2, 0], [marker_length/2, marker_length/2, 0],
-                [marker_length/2, -marker_length/2, 0], [-marker_length/2, -marker_length/2, 0]
+                [-marker_length/2, marker_length/2, 0],
+                [marker_length/2, marker_length/2, 0],
+                [marker_length/2, -marker_length/2, 0],
+                [-marker_length/2, -marker_length/2, 0]
             ], dtype=np.float64)
+            
             if mid in self.RotSideDict:
                 obj_pts = np.dot(obj_pts, self.RotSideDict[mid].T) - self.TvecSideDict[mid]
             object_points.extend(obj_pts)
@@ -339,6 +353,10 @@ class Camera:
         success, rvec, tvec = cv2.solvePnP(
             np.array(object_points), np.array(image_points), 
             self.camera_matrix, self.dist_coefs, flags=cv2.SOLVEPNP_SQPNP)
+        
+        success, rvec, tvec = cv2.solvePnP(
+            np.array(object_points), np.array(image_points),
+            self.camera_matrix, self.dist_coefs, rvec, tvec, useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
         
         if not success:
             return None, None, None
