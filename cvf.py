@@ -226,17 +226,19 @@ class Camera:
                     tvecs.append(tvec.flatten())
                     print(f"Frame {len(tmatrices)}/{num_frames} successfully processed")
 
-            if len(tmatrices) < num_frames:
-                print("Failed to initialize field pose: not enough good frames found")
-                return False
-
-            # Усреднение результатов
             # Усреднение векторов трансляции
             self.tvec_cam_to_field = np.mean(tvecs, axis=0)
-            # Усреднение матриц поворота через кватернионы
+
+            # Получаем кватернионы [x, y, z, w]
             quats = R.from_matrix(tmatrices).as_quat()
+            # Выравниваем кватернионы: если w < 0, инвертируем весь кватернион (q -> -q), чтобы получить то же вращение, но с w > 0.
+            quats[quats[:, 3] < 0] *= -1
+            # Теперь усредняем
             avg_quat = np.mean(quats, axis=0)
-            self.tmatrix_field = R.from_quat(avg_quat / np.linalg.norm(avg_quat)).as_matrix()
+            # Нормализуем результат
+            avg_quat /= np.linalg.norm(avg_quat)
+            # Конвертируем обратно в матрицу
+            self.tmatrix_field = R.from_quat(avg_quat).as_matrix()
 
             self.pose_initialized = True
             print("Field pose initialization successful!")
@@ -320,7 +322,7 @@ class Camera:
             return corners, ids.flatten(), rejected
         return None, None, None
 
-    def estimate_robot_pose(self, ids, corners):
+    def estimate_robot_pose(self, ids, corners, cov_flag=True):
         robot_corners, robot_ids = [], []
         target_range = self.colour_range
 
@@ -369,31 +371,62 @@ class Camera:
         self.robot_rot_matrix = np.dot(self.tmatrix_field.T, rot_matrix)
         quat = R.from_matrix(self.robot_rot_matrix).as_quat()
 
-        # Рассчитываем ковариацию в системе координат камеры
-        Sigma_cam = compute_pose_covariance(
-            object_points=np.array(object_points), 
-            image_points=np.array(image_points), 
-            rvec=rvec, 
-            tvec=tvec,
-            camera_matrix=self.camera_matrix, 
-            dist_coeffs=self.dist_coefs, 
-            sigma_pix=1.0
-        )
-        
-        # Переносим ковариацию в систему координат поля (SE(3) transformation)                
-        R_field_to_cam = self.tmatrix_field.T
-        t_field_to_cam = - R_field_to_cam @ self.tvec_cam_to_field.reshape(3, 1)
-
-        # Применяем формулу переноса ковариации
-        cov = transform_covariance_SE3(
-            Sigma_cam, 
-            R_field_to_cam, 
-            t_field_to_cam
-        )
+        if cov_flag:
+            # Рассчитываем ковариацию в системе координат камеры
+            Sigma_cam = compute_pose_covariance(
+                object_points=np.array(object_points), 
+                image_points=np.array(image_points), 
+                rvec=rvec, 
+                tvec=tvec,
+                camera_matrix=self.camera_matrix, 
+                dist_coeffs=self.dist_coefs, 
+                sigma_pix=1.0
+            )
+            
+            # Переносим ковариацию в систему координат поля (SE(3) transformation)                
+            R_field_to_cam = self.tmatrix_field.T
+            t_field_to_cam = - R_field_to_cam @ self.tvec_cam_to_field.reshape(3, 1)
+            
+            # Применяем формулу переноса ковариации
+            cov = transform_covariance_SE3(
+                Sigma_cam, 
+                R_field_to_cam, 
+                t_field_to_cam
+            )
+        else:
+            cov = np.zeros((6, 6), dtype=np.float64)
 
         return self.robot_tvec, quat, cov
 
-    def fast_robot_tracking(self, img):
+    def fast_robot_tracking(self, img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, list, np.ndarray] | None:
+        """
+        Performs fast robot pose tracking.
+
+        This method implements high-performance tracking by detecting ArUco markers
+        in a limited region of interest (ROI) rather than across the entire frame.
+        This significantly speeds up processing and reduces computational load.
+
+        Requires that `initialize_field_pose()` be called at least once
+        before this method can be used.
+        
+        Args:
+            img (np.ndarray): The input video frame on which to detect markers.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, np.ndarray, list, np.ndarray] | None:
+                On successful detection, returns a tuple containing:
+                    - tvec (np.ndarray): Translation vector (x, y, z) of the
+                    robot's pose relative to the field.
+                    - quat (np.ndarray): Quaternion (w, x, y, z) representing
+                    the robot's rotation relative to the field.
+                    - cov (np.ndarray): The 6x6 pose covariance matrix.
+                    - corners (list): The list of
+                    detected marker corner coordinates.
+                    - ids (np.ndarray): The array of IDs for the detected markers.
+                
+                Returns None if `self.pose_initialized` is False or if no
+                markers are found in the ROI.
+            """
         if not self.pose_initialized:
             print("Error: Field pose is not initialized. Call initialize_field_pose() first.")
             return None
@@ -403,13 +436,15 @@ class Camera:
 
         # Оценка позы робота, используя найденные маркеры и трансформ к полю
         if ids is not None:
-            tvec, quat, cov = self.estimate_robot_pose(ids, corners)
+            tvec, quat, cov = self.estimate_robot_pose(ids, corners, cov_flag=True)
             return tvec, quat, cov, corners, ids
 
         return None
 
-    def project_field_and_robot_to_image(self, image, points_robot):
-
+    def project_3D_points_from_robot_to_image(self, image, points_robot):
+        """
+        Отображение 3D точек в СК робота на изображении.
+        """
         # Объединяем вращения: R_cam_robot = R_cam_field @ R_field_robot
         R_cam_robot = self.tmatrix_field @ self.robot_rot_matrix
 
@@ -446,6 +481,39 @@ class Camera:
             
             # Рисуем круг в этой точке
             cv2.circle(image, center, 1, (255, 0, 0), 2)
+
+        return image
+
+    def project_3D_points_from_filed_to_image(self, image, points, color=(0, 255, 0), radius=1):
+        """
+        Отображение 3D точек в СК поля на изображении в соответствии
+        с rvec и tvec после начальной инициализации камеры.
+        """
+        tvec = self.tvec_cam_to_field
+        rvec, _ = cv2.Rodrigues(self.tmatrix_field)
+
+        # Убедимся, что входные 3D точки имеют правильный тип и форму
+        # (cv2.projectPoints ожидает (N, 3) или (N, 1, 3) и тип float64)
+        points_field_np = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+
+        # Проецируем 3D точки из СК поля в СК изображения
+        image_points, _ = cv2.projectPoints(
+            points_field_np,
+            rvec,
+            tvec,
+            self.camera_matrix,
+            self.dist_coefs
+        )
+
+        # Рисуем 2D точки на изображении
+        image_points = image_points.reshape(-1, 2) # Убираем лишние измерения
+
+        for point in image_points:
+            # Координаты пикселей должны быть целыми числами
+            center = tuple(point.astype(int))
+            
+            # Рисуем круг в найденной 2D точке
+            cv2.circle(image, center, radius, color, -1)
 
         return image
 

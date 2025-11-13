@@ -35,7 +35,6 @@ camera_stream_params_path = os.path.join(script_dir, 'config/camera_stream_param
 team = "blue"
 # team_enemy = "blue"
 camera_our = Camera(camera_stream_params_path, team)
-# camera_enemy = Camera(camera_stream_params_path, team_enemy)
 cap = HarvesterCamera(camera_stream_params_path, camera_cti_api_path)
 # ===============================================================================
 
@@ -87,19 +86,19 @@ def aruco_detect_in_roi(image, roi_size, roi_center_aruco_list):
     offset = [0, 0]
     
     if prev_center is None or current_target_aruco is None:
-        # Глобальная детекция - ищем любой из желательных маркеров
+        # Global detection - we search for any of the desired markers
         corners, ids, rejected = detector.detectMarkers(image)
         print("Global detection")
         
         if ids is not None:
-            # Ищем первый попавшийся маркер из желательных
+            # We are looking for the first marker we come across from the desired ones
             target_mask = np.isin(ids.flatten(), roi_center_aruco_list)
             target_indices = np.flatnonzero(target_mask)
             
             if target_indices.size > 0:
-                # Выбираем первый найденный маркер как целевой
+                # We select the first found marker as the target
                 current_target_aruco = ids[target_indices[0]][0]
-                # Вычисляем центр для нового целевого маркера
+                # Calculate the center for the new target marker
                 top_aruco_corners = corners[target_indices[0]][0]
                 prev_center = (int(np.mean(top_aruco_corners[:, 0])), 
                               int(np.mean(top_aruco_corners[:, 1])))
@@ -107,35 +106,35 @@ def aruco_detect_in_roi(image, roi_size, roi_center_aruco_list):
                 current_target_aruco = None
                 prev_center = None
     else:
-        # ROI детекция вокруг текущего целевого маркера
+        # ROI detection around the current target marker
         roi, roi_coords = get_roi(image, prev_center, roi_size)
         offset = roi_coords[:2]
         corners, ids, rejected = detector.detectMarkers(roi)
         
         target_found = False
         if ids is not None:
-            # Проверяем наличие текущего целевого маркера в ROI
+            # Checking the presence of the current target marker in the ROI
             current_target_mask = (ids == current_target_aruco).flatten()
             if np.any(current_target_mask):
                 target_found = True
             else:
-                # Если текущий маркер потерян, ищем другие желательные маркеры в ROI
+                # If the current marker is lost, we look for other desired markers in the ROI
                 alternative_mask = np.isin(ids.flatten(), roi_center_aruco_list)
                 alternative_indices = np.flatnonzero(alternative_mask)
                 
                 if alternative_indices.size > 0:
-                    # Переключаемся на альтернативный маркер
+                    # Switching to an alternative marker
                     current_target_aruco = ids[alternative_indices[0]][0]
                     target_found = True
         
         if not target_found:
-            # Если в ROI ничего не нашли, переключаемся на глобальную детекцию
+            # If nothing is found in the ROI, we switch to global detection
             corners, ids, rejected = detector.detectMarkers(image)
             offset = [0, 0]
             roi_coords = None
             print("switching local detection to global detection")
             
-            # Пытаемся найти любой желательный маркер
+            # We try to find any desired marker
             if ids is not None:
                 target_mask = np.isin(ids.flatten(), roi_center_aruco_list)
                 target_indices = np.flatnonzero(target_mask)
@@ -149,25 +148,25 @@ def aruco_detect_in_roi(image, roi_size, roi_center_aruco_list):
                     current_target_aruco = None
                     prev_center = None
 
-    # Отрисовка ROI
+    # Drawing ROI
     if roi_coords is not None:
         x_start, y_start, x_end, y_end = roi_coords
         cv2.rectangle(image, (x_start, y_start), (x_end, y_end), (0, 0, 255), 2)
         cv2.putText(image, f'Target: {current_target_aruco}', 
                    (x_start, y_start - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
-    # Обновление позиции центра для текущего целевого маркера
+    # Update the center position for the current target marker
     if ids is not None and current_target_aruco is not None:
         target_mask = (ids == current_target_aruco).flatten()
         target_indices = np.flatnonzero(target_mask)
         
-        # Если целевой маркер не найден - сбрасываем состояние
+        # If the target marker is not found, we reset the state
         if target_indices.size == 0:
             prev_center = None
             current_target_aruco = None
             return corners, ids, rejected
         
-        # Целевой маркер найден - обновляем позицию
+        # Target marker found - update position
         n_markers = len(corners)
         corners_flat = np.concatenate(corners, axis=0).reshape(-1, 2)
         corners_flat += offset
@@ -227,30 +226,31 @@ def main():
 
             # ================================= Robot tracking ================================
             if ROBOT_TRACKING:
-                # Оценка положения камеры (делается один раз)
+                # Estimating the camera position (done once)
                 if not camera_our.initialize_field_pose(cap, num_frames=20):
                     cv2.destroyAllWindows()
                     exit()
 
-                # camera_enemy.tmatrix_field = camera_our.tmatrix_field
-                # camera_enemy.tvec_cam_to_field = camera_our.tvec_cam_to_field
-                # camera_enemy.pose_initialized = camera_our.pose_initialized
-
-                # Вызываем быструю функцию отслеживания
-                results, results_enemy = None, None
+                # Calling a quick tracking function
                 results = camera_our.fast_robot_tracking(display_img)
-                # results_enemy = camera_enemy.fast_robot_tracking(display_img)
-
-                points_robot = np.array([
-                    [0.035, 0.035, 0.0], [-0.035, 0.035, 0], [-0.035, -0.035, 0], [0.035, -0.035, 0],
-                    [0.05, 0.025, -0.03], [0.05, 0.025, -0.08], [0.05, -0.025, -0.08], [0.05, -0.025, -0.03]
-                    ], dtype=np.float64)
 
                 if results is not None:
                     tvec = results[0]
                     means, stds = cvf.calculate_moving_stats(tvec, tvec_history)
 
-                    display_img = camera_our.project_field_and_robot_to_image(display_img, points_robot)
+                    # Key points to check
+                    points = np.array([
+                    [-0.9, 0.4, 0.0], [0.9, 0.4, 0.0], [0.9, -0.4, 0.0], [-0.9, -0.4, 0.0],
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.02],
+                    [means[0], means[1], means[2]]
+                    ], dtype=np.float64)
+                    
+                    # Displaying points in the robot's coordinate system
+                    # display_img = camera_our.project_3D_points_from_robot_to_image(display_img, points)
+                    # Displaying points in the field coordinate system
+                    display_img = camera_our.project_3D_points_from_filed_to_image(display_img, points)
+
                     cv2.aruco.drawDetectedMarkers(display_img, results[3], results[4], (0, 0, 255))
 
                     np.set_printoptions(linewidth=300)
@@ -258,11 +258,6 @@ def main():
                     print(f"mean x={means[0]:.4f}, y={means[1]:.4f}, z={means[2]:.4f}")
                     print(f"sigma_x={stds[0]:.4f}, sigma_y={stds[1]:.4f}, sigma_z={stds[2]:.4f}")
                     print("Covariance matrix:\n", results[2])
-
-                # if results_enemy is not None:
-                #     tvec_enemy = results_enemy[0]
-                #     print(f"Enemy robot: x={tvec_enemy[0]:.3f}, y={tvec_enemy[1]:.3f}, z={tvec_enemy[2]:.3f}")
-                #     cv2.aruco.drawDetectedMarkers(display_img, results_enemy[3], results_enemy[4], (0, 0, 255))
             # =================================================================================
 
             cv2.imshow("Camera stream", display_img)
@@ -279,7 +274,7 @@ def main():
                 break
 
     except Exception as e:
-        print(f"Критическая ошибка: {e}")
+        print(f"Error: {e}")
 
     finally:
         if cap:
