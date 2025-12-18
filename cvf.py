@@ -106,6 +106,10 @@ class Camera:
 
         # Настройки детектора ArUco
         self.arucoParams = cv2.aruco.DetectorParameters()
+        # self.arucoParams.adaptiveThreshWinSizeMin = 10
+        # self.arucoParams.adaptiveThreshWinSizeMax = 60
+        # self.arucoParams.minMarkerPerimeterRate = 0.04
+        # self.arucoParams.maxMarkerPerimeterRate = 0.3
         self.arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100)
         self.detector = cv2.aruco.ArucoDetector(self.arucoDict, self.arucoParams)
 
@@ -172,80 +176,88 @@ class Camera:
         self.pose_initialized = False
         self.tmatrix_field = None      # Матрица поворота камера2поле
         self.tvec_cam_to_field = None  # Вектор трансляции камера2поле
+        self.init_tmatrices = []
+        self.init_tvecs = []
 
         # Транформы поле2робот
         self.robot_tvec = None
         self.robot_rot_matrix = None
 
-    def initialize_field_pose(self, cap, num_frames=10):
-        """Вычисляет и сохраняет усредненную матрицу перехода от камеры к полю"""
-        if not self.pose_initialized:
-            print(f"Starting field pose initialization from {num_frames} frames...")
-            tmatrices = []
-            tvecs = []
-            
-            while len(tmatrices) < num_frames:
+        # Очки в зоне при MULTI_ROI отслеживании
+        self.zone_states = {}
 
-                _, img = cap.harvester_read()
+    def initialize_field_pose(self, img, num_frames=10):
+        """
+        Принимает один кадр (img).
+        Возвращает True, если инициализация ЗАВЕРШЕНА (или уже была завершена).
+        Возвращает False, если процесс еще идет.
+        """
+        # Если уже инициализировано, сразу говорим ОК
+        if self.pose_initialized:
+            return True
+        
+        # Детекция маркеров (используем детектор класса)
+        corners, ids, _ = self.detector.detectMarkers(img)
+        
+        if ids is not None:
+            ids = list(map(lambda x: x[0], ids))
 
-                corners, ids, _ = self.detector.detectMarkers(img)
-                if ids is not None:
-                    ids = list(map(lambda x: x[0], ids))
+        # Если нет маркеров поля, выходим, ждем следующий кадр
+        if not ids or not any(marker_id in self.field_markers for marker_id in ids):
+            return False
+        
+        field_corners, field_ids = [], []
 
-                if not ids or not any(marker_id in self.field_markers for marker_id in ids):
-                    continue
+        for i, marker_id in enumerate(ids):
+            if marker_id in self.field_markers:
+                field_corners.append(corners[i][0])
+                field_ids.append(marker_id)
+        
+        # Проверка полноты (нужно 4 маркера)
+        if len(field_ids) < 4:
+            print(f"Detected {len(field_ids)} markers out of 4") # Можно раскомментировать для отладки
+            return False
 
-                field_corners, field_ids = [], []
+        object_points, image_points = [], []
 
-                for i, marker_id in enumerate(ids):
-                    if marker_id in self.field_markers:
-                        field_corners.append(corners[i][0])
-                        field_ids.append(marker_id)
-                
-                # Проверка полноты детекции маркеров поля
-                if len(field_ids) < 4:
-                    print(f"Detected {len(field_ids)} markers out of 4")
-                    continue
+        for mid, corners_set in zip(field_ids, field_corners):
+            object_points.extend(self.field_marker_obj_pts[mid])
+            image_points.extend(corners_set)
 
-                object_points, image_points = [], []
+        success, rvec, tvec = cv2.solvePnP(
+            np.array(object_points), np.array(image_points), 
+            self.camera_matrix, self.dist_coefs, flags=cv2.SOLVEPNP_IPPE)
+        
+        success, rvec, tvec = cv2.solvePnP(
+            np.array(object_points), np.array(image_points),
+            self.camera_matrix, self.dist_coefs, rvec, tvec, useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
 
-                for mid, corners_set in zip(field_ids, field_corners):
-                    object_points.extend(self.field_marker_obj_pts[mid])
-                    image_points.extend(corners_set)
+        if success:
+            self.init_tmatrices.append(cv2.Rodrigues(rvec)[0])
+            self.init_tvecs.append(tvec.flatten())
+            print(f"Init progress: {len(self.init_tmatrices)}/{num_frames}")
 
-                success, rvec, tvec = cv2.solvePnP(
-                    np.array(object_points), np.array(image_points), 
-                    self.camera_matrix, self.dist_coefs, flags=cv2.SOLVEPNP_IPPE)
-                
-                success, rvec, tvec = cv2.solvePnP(
-                    np.array(object_points), np.array(image_points),
-                    self.camera_matrix, self.dist_coefs, rvec, tvec, useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
+        # ПРОВЕРКА: Набрали ли достаточно кадров?
+        if len(self.init_tmatrices) >= num_frames:
+            # === ФИНАЛИЗАЦИЯ (Расчет средних) ===
+            self.tvec_cam_to_field = np.mean(self.init_tvecs, axis=0)
 
-                if success:
-                    tmatrices.append(cv2.Rodrigues(rvec)[0])
-                    tvecs.append(tvec.flatten())
-                    print(f"Frame {len(tmatrices)}/{num_frames} successfully processed")
-
-            # Усреднение векторов трансляции
-            self.tvec_cam_to_field = np.mean(tvecs, axis=0)
-
-            # Получаем кватернионы [x, y, z, w]
-            quats = R.from_matrix(tmatrices).as_quat()
-            # Выравниваем кватернионы: если w < 0, инвертируем весь кватернион (q -> -q), чтобы получить то же вращение, но с w > 0.
+            quats = R.from_matrix(self.init_tmatrices).as_quat()
             quats[quats[:, 3] < 0] *= -1
-            # Теперь усредняем
             avg_quat = np.mean(quats, axis=0)
-            # Нормализуем результат
             avg_quat /= np.linalg.norm(avg_quat)
-            # Конвертируем обратно в матрицу
             self.tmatrix_field = R.from_quat(avg_quat).as_matrix()
 
             self.pose_initialized = True
+            
+            # Очищаем буферы, они больше не нужны
+            self.init_tmatrices = []
+            self.init_tvecs = []
+            
             print("Field pose initialization successful!")
-            print(f"Constant T-Matrix:\n{self.tmatrix_field}")
-            print(f"Constant T-Vec: {self.tvec_cam_to_field}")
+            return True
 
-        return True
+        return False
 
     def get_roi(self, image, center, roi_size):
         h, w = image.shape[:2]
@@ -517,6 +529,152 @@ class Camera:
 
         return image
 
+    def pantry_checker(self, team_color, image, zones_3d_dict, roi_size=200):
+        """
+        Осматривает кладовые-ROI и подсчитывает очки.
+
+        Args:
+            team_color (str): 'yellow' или 'blue'.
+            image (np.ndarray): исходное изображение.
+            zones_3d_dict (list): список xyz координат центров зон.
+            roi_size (int): размер ROI в пикселях.
+
+        Returns:
+            tuple: Кортеж, содержащий:
+            - image (np.ndarray): Изображение с ROI областями и отображением очков.
+            - updated_zones (dict): Словарь формата:
+                - ключ: xyz координаты ROI области.
+                - значение: кол-во очков .
+        """
+        MEMORY_LIMIT = 60   # Буфер для памяти маркеров
+        DIST_THRESHOLD = 10 # Разрешающая способность для различения маркеров
+
+        if team_color == 'yellow':
+            target_id = 47
+            opponent_id = 36
+        else:  # 'blue'
+            target_id = 36
+            opponent_id = 47
+
+        rvec, _ = cv2.Rodrigues(self.tmatrix_field)
+        tvec = self.tvec_cam_to_field
+
+        updated_zones = {}
+
+        for center_3d_key in zones_3d_dict:
+            x, y, z = center_3d_key
+            
+            points_to_check = [(x, y, z)]
+            if abs(x) > 0.0:
+                points_to_check.append((-x, y, z))
+            
+            for pt_3d in points_to_check:
+                pt_3d_np = np.array([pt_3d], dtype=np.float64)
+                img_pts, _ = cv2.projectPoints(
+                    pt_3d_np, rvec, tvec, self.camera_matrix, self.dist_coefs
+                )
+                center_2d = tuple(img_pts[0][0].astype(int))
+                
+                roi, coords = self.get_roi(image, center_2d, roi_size)
+                x_start, y_start, x_end, y_end = coords
+
+                corners, ids, rejected = self.detector.detectMarkers(roi)
+                
+                # Подготавливаем список обнаруженных сейчас объектов: [{'id': 36, 'center': (x,y)}, ...]
+                current_detections = []
+                if ids is not None:
+                    offset = np.array([x_start, y_start])
+                    global_corners_list = [c + offset for c in corners]
+                    cv2.aruco.drawDetectedMarkers(image, global_corners_list, ids, (255, 255, 255))
+                    
+                    ids_flat = ids.flatten()
+                    for i, mid in enumerate(ids_flat):
+                        c = corners[i][0]
+                        cx = int(np.mean(c[:, 0])) + x_start
+                        cy = int(np.mean(c[:, 1])) + y_start
+                        current_detections.append({'id': mid, 'center': (cx, cy)})
+
+                if pt_3d not in self.zone_states:
+                    self.zone_states[pt_3d] = []
+                
+                tracked_markers = self.zone_states[pt_3d]
+                
+                # Помечаем все сохраненные маркеры как "не найденные в этом кадре" пока что
+                for tm in tracked_markers:
+                    tm['updated_this_frame'] = False
+
+                # Пытаемся сопоставить новые детекции с сохраненными
+                for det in current_detections:
+                    matched = False
+                    # Ищем ближайший сохраненный маркер с таким же ID
+                    best_dist = float('inf')
+                    best_idx = -1
+                    
+                    for i, tm in enumerate(tracked_markers):
+                        if tm['id'] == det['id']:
+                            # Считаем расстояние между центрами
+                            dist = np.linalg.norm(np.array(det['center']) - np.array(tm['center']))
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_idx = i
+                    
+                    # Если нашли близкий маркер того же типа
+                    if best_idx != -1 and best_dist < DIST_THRESHOLD:
+                        # Обновляем его позицию и сбрасываем счетчик потери
+                        tracked_markers[best_idx]['center'] = det['center']
+                        tracked_markers[best_idx]['lost_frames'] = 0
+                        tracked_markers[best_idx]['updated_this_frame'] = True
+                        matched = True
+                    
+                    # Если совпадений нет - это новый маркер, добавляем в память
+                    if not matched:
+                        tracked_markers.append({
+                            'id': det['id'],
+                            'center': det['center'],
+                            'lost_frames': 0,
+                            'updated_this_frame': True
+                        })
+
+                # Чистка памяти: удаляем те, которые долго не видели, обновляем счетчики
+                # Используем list comprehension для фильтрации
+                new_tracked_list = []
+                for tm in tracked_markers:
+                    if not tm.get('updated_this_frame', False):
+                        tm['lost_frames'] += 1
+                    
+                    # Оставляем только те, что не превысили лимит памяти
+                    if tm['lost_frames'] < MEMORY_LIMIT:
+                        new_tracked_list.append(tm)
+                
+                self.zone_states[pt_3d] = new_tracked_list
+
+                my_count = 0
+                opponent_count = 0
+                
+                for tm in new_tracked_list:
+                    mid = tm['id']
+                    if mid == target_id:
+                        my_count += 1
+                    elif mid == opponent_id:
+                        opponent_count += 1
+                
+                our_score = my_count * 3
+                enemy_score = opponent_count * 3
+                
+                if my_count > opponent_count:
+                    our_score += 5
+                if opponent_count > my_count:
+                    enemy_score += 5
+
+                updated_zones[pt_3d] = [our_score, enemy_score]
+
+                cv2.rectangle(image, (x_start, y_start), (x_end, y_end), (255, 255, 255), 1)
+                score_text = f"{team_color} vs enemy: {our_score} vs {enemy_score}"
+                cv2.putText(image, score_text, (x_start, y_start-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.circle(image, center_2d, 2, (255, 255, 255), -1)
+
+        return image, updated_zones
+
 
 
 class HarvesterCamera:
@@ -526,6 +684,9 @@ class HarvesterCamera:
         self.ia = None
         self.running = False
 
+        # self.gamma_val = 0.5
+        # self.lut = self.create_gamma_lut(self.gamma_val)
+        
         # Загружаем параметры из YAML
         with open(stream_params_path, 'r') as f:
             camera_config = yaml.safe_load(f)
@@ -565,6 +726,9 @@ class HarvesterCamera:
             
             self.ia.remote_device.node_map.BlackLevelEnable.value = True
             self.ia.remote_device.node_map.BlackLevel.value = params['black_level']
+
+            self.ia.remote_device.node_map.GammaEnable.value = True
+            self.ia.remote_device.node_map.Gamma.value = params['gamma']
             
             # Запускаем захват
             self.ia.start()
@@ -573,6 +737,11 @@ class HarvesterCamera:
         except Exception as e:
             self.release()
             raise e
+        
+    def create_gamma_lut(self, gamma):
+        lut = np.arange(256, dtype=np.float16)
+        lut = ((lut / 255.0) ** gamma) * 255.0
+        return lut.astype("uint8")
 
     def harvester_read(self):
         """
@@ -582,22 +751,23 @@ class HarvesterCamera:
         if not self.running:
             return False, None
 
-        try:
-            with self.ia.fetch(timeout=2.0) as buffer:
-                if buffer.payload.components:
-                    # Извлечение данных
-                    img = buffer.payload.components[0].data
-                    img = img.reshape(self.height, self.width)
+        # try:
+        with self.ia.fetch(timeout=2.0) as buffer:
+            if buffer.payload.components:
+                # Извлечение данных
+                img = buffer.payload.components[0].data
+                img = img.reshape(self.height, self.width)
 
-                    frame = cv2.cvtColor(img, cv2.COLOR_BayerBG2BGR_EA)
-                    frame = gamma_correction(frame)
-                    
-                    return True, frame
-                else:
-                    return False, None
-        except Exception as e:
-            print(f"Error when reading the frame: {e}")
-            return False, None
+                # frame = cv2.LUT(img, self.lut)
+                # frame = cv2.cvtColor(img, cv2.COLOR_YUV2BGR_Y422)
+                frame = img.copy()
+
+                return True, frame
+            else:
+                return False, None
+        # except Exception as e:
+        #     print(f"Error when reading the frame: {e}")
+        #     return False, None
 
     def get_raw_fps(self):
         """Вспомогательный метод для получения текущего FPS с камеры"""

@@ -10,18 +10,30 @@ from collections import deque
 ARUCO_DETECT = False
 FAST_ARUCO_DETECT = False
 RECORD_DATASET = False # Flag for recording the calibration dataset (snapshot by pressing the "s" key)
-ROBOT_TRACKING = True
+ROBOT_TRACKING = False
+MULTI_ROI = True
 
 # Params for fast marker detection
 ROI_SIZE = 1000 # Frame area to search
-ROI_CENTER_ARUCO = [6, 126, 127, 74, 75, 76, 77] # ID-list of ROI-center aruco marker
+ROI_CENTER_ARUCO = [2] # ID-list of ROI-center aruco marker
 prev_center = None
 current_target_aruco = None
+# Centers of the zones to check nuts
+check_zone_centers = [
+    (0.25, 0.45, 0),
+    (0.0, -0.2, 0),
+    (0.7, -0.2, 0),
+    (1.4, -0.2, 0),
+    (0.0, -0.9, 0),
+    (0.8, -0.9, 0)
+]
 
 # Dictionary for marker detection in the preview
 DICTIONARY = cv2.aruco.DICT_4X4_250
 aruco_dict = cv2.aruco.getPredefinedDictionary(DICTIONARY)
 parameters = cv2.aruco.DetectorParameters()
+# parameters.adaptiveThreshWinSizeMin = 10
+# parameters.adaptiveThreshWinSizeMax = 60
 detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
 
 # ============================= Directory paths =================================
@@ -179,7 +191,7 @@ def aruco_detect_in_roi(image, roi_size, roi_center_aruco_list):
     return corners, ids, rejected
 
 def main():
-    try:
+    # try:
         count = 0
         
         cv2.namedWindow("Camera stream", cv2.WINDOW_NORMAL)
@@ -190,6 +202,7 @@ def main():
             key = cv2.waitKey(1) & 0xFF
 
             ret, aruco_img = cap.harvester_read()
+            # aruco_img = cv2.imread("multi_roi.bmp", cv2.IMREAD_GRAYSCALE)
 
             # ============================== Image post-processing ============================
             # Filtering
@@ -205,14 +218,14 @@ def main():
             if ARUCO_DETECT:
                 corners, ids, rejected = detector.detectMarkers(display_img)
                 if ids is not None:
-                    cv2.aruco.drawDetectedMarkers(display_img, corners, ids, (0, 0, 255))
+                    cv2.aruco.drawDetectedMarkers(display_img, corners, ids, (255, 255, 255))
             # =================================================================================
 
             # ============================= Fast aruco detection ==============================
             if FAST_ARUCO_DETECT:
                 corners, ids, rejected = aruco_detect_in_roi(display_img, ROI_SIZE, ROI_CENTER_ARUCO)
                 if ids is not None:
-                    cv2.aruco.drawDetectedMarkers(display_img, corners, ids, (0, 0, 255))
+                    cv2.aruco.drawDetectedMarkers(display_img, corners, ids, (255, 255, 255))
             # =================================================================================
 
             # ======================= Image recording for calibration =========================
@@ -227,9 +240,14 @@ def main():
             # ================================= Robot tracking ================================
             if ROBOT_TRACKING:
                 # Estimating the camera position (done once)
-                if not camera_our.initialize_field_pose(cap, num_frames=20):
-                    cv2.destroyAllWindows()
-                    exit()
+                if not camera_our.pose_initialized:
+                    print("Initializing field pose...")
+                    finished = camera_our.initialize_field_pose(display_img, num_frames=20)
+                    
+                    if finished:
+                        print("Field initialized successfully! Starting tracking...")
+                    else:
+                        continue
 
                 # Calling a quick tracking function
                 results = camera_our.fast_robot_tracking(display_img)
@@ -251,13 +269,29 @@ def main():
                     # Displaying points in the field coordinate system
                     display_img = camera_our.project_3D_points_from_filed_to_image(display_img, points)
 
-                    cv2.aruco.drawDetectedMarkers(display_img, results[3], results[4], (0, 0, 255))
+                    cv2.aruco.drawDetectedMarkers(display_img, results[3], results[4], (255, 255, 255))
 
                     np.set_printoptions(linewidth=300)
                     print(f"raw: x={tvec[0]:.4f}, y={tvec[1]:.4f}, z={tvec[2]:.4f}")
                     print(f"mean x={means[0]:.4f}, y={means[1]:.4f}, z={means[2]:.4f}")
                     print(f"sigma_x={stds[0]:.4f}, sigma_y={stds[1]:.4f}, sigma_z={stds[2]:.4f}")
                     print("Covariance matrix:\n", results[2])
+            # =================================================================================
+
+            # ================================ MULTI ROI ======================================
+            if MULTI_ROI:
+                # Estimating the camera position (done once)
+                if not camera_our.pose_initialized:
+                    print("Initializing field pose...")
+                    finished = camera_our.initialize_field_pose(display_img, num_frames=20)
+                    
+                    if finished:
+                        print("Field initialized successfully! Starting tracking...")
+                    else:
+                        continue
+                    
+                display_img, updated_scores = camera_our.pantry_checker(team, display_img, check_zone_centers, roi_size=250)
+                print(updated_scores)
             # =================================================================================
 
             cv2.imshow("Camera stream", display_img)
@@ -273,13 +307,13 @@ def main():
             if key == ord('q'):
                 break
 
-    except Exception as e:
-        print(f"Error: {e}")
+    # except Exception as e:
+    #     print(f"Error: {e}")
 
-    finally:
-        if cap:
-            cap.release()
-        cv2.destroyAllWindows()
+    # finally:
+    #     if cap:
+    #         cap.release()
+    #     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
