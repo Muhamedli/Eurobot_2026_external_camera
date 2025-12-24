@@ -4,7 +4,7 @@ import yaml
 from scipy.spatial.transform import Rotation as R
 from harvesters.core import Harvester
 from typing import Tuple, Deque, List
-
+import time
 
 def read_config(config_path):
     with open(config_path, 'r') as file:
@@ -129,10 +129,10 @@ class Camera:
                 77: R.from_euler('x', -90, degrees=True).as_matrix()
             }
             self.TvecSideDict = {
-                74: np.array([-0.05, 0.0, 0.055]),
-                75: np.array([0.0, 0.05, 0.055]),
-                76: np.array([0.05, 0.0, 0.055]),
-                77: np.array([0.0, -0.05, 0.055])
+                74: np.array([-0.05, 0.0, 0.058]),
+                75: np.array([0.0, 0.05, 0.058]),
+                76: np.array([0.05, 0.0, 0.058]),
+                77: np.array([0.0, -0.05, 0.058])
             }
         else: # team == "blue"
             self.colour_range = range(1, 6)
@@ -144,10 +144,10 @@ class Camera:
                 58: R.from_euler('x', -90, degrees=True).as_matrix()
             }
             self.TvecSideDict = {
-                55: np.array([-0.05, 0.0, 0.055]),
-                56: np.array([0.0, 0.05, 0.055]),
-                57: np.array([0.05, 0.0, 0.055]),
-                58: np.array([0.0, -0.05, 0.055])
+                55: np.array([-0.05, 0.0, 0.058]),
+                56: np.array([0.0, 0.05, 0.058]),
+                57: np.array([0.05, 0.0, 0.058]),
+                58: np.array([0.0, -0.05, 0.058])
             }
         
         # Координаты маркеров поля
@@ -448,7 +448,7 @@ class Camera:
 
         # Оценка позы робота, используя найденные маркеры и трансформ к полю
         if ids is not None:
-            tvec, quat, cov = self.estimate_robot_pose(ids, corners, cov_flag=True)
+            tvec, quat, cov = self.estimate_robot_pose(ids, corners, cov_flag=False)
             return tvec, quat, cov, corners, ids
 
         return None
@@ -546,7 +546,7 @@ class Camera:
                 - ключ: xyz координаты ROI области.
                 - значение: кол-во очков .
         """
-        MEMORY_LIMIT = 60   # Буфер для памяти маркеров
+        MEMORY_LIMIT = 90   # Буфер для памяти маркеров
         DIST_THRESHOLD = 10 # Разрешающая способность для различения маркеров
 
         if team_color == 'yellow':
@@ -674,6 +674,66 @@ class Camera:
                 cv2.circle(image, center_2d, 2, (255, 255, 255), -1)
 
         return image, updated_zones
+
+
+
+class PoseFilter:
+    def __init__(self, min_cutoff=1.0, beta=0.0, d_cutoff=1.0):
+        """
+        Implementation of the one_euro filter for robot pose.
+        """
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        
+        self.x_prev = None
+        self.dx_prev = None
+        self.t_prev = None
+
+    def one_euro(self, xyz, xyzw, t=None):
+        current_x = np.concatenate((xyz, xyzw))
+        
+        if t is None:
+            t = time.time()
+
+        if self.x_prev is None:
+            self.x_prev = current_x
+            self.dx_prev = np.zeros_like(current_x)
+            self.t_prev = t
+            return current_x[:3], current_x[3:]
+
+        dt = t - self.t_prev
+        if dt <= 0: return self.x_prev[:3], self.x_prev[3:]
+
+        dot = np.dot(self.x_prev[3:], current_x[3:])
+        if dot < 0:
+            current_x[3:] *= -1
+
+        a_d = self._smoothing_factor(dt, self.d_cutoff)
+        dx = (current_x - self.x_prev) / dt
+        dx_hat = self._exponential_smoothing(a_d, dx, self.dx_prev)
+
+        cutoff = self.min_cutoff + self.beta * np.abs(dx_hat)
+
+        a = self._smoothing_factor(dt, cutoff)
+        x_hat = self._exponential_smoothing(a, current_x, self.x_prev)
+
+        q_len = np.linalg.norm(x_hat[3:])
+        if q_len > 0:
+            x_hat[3:] /= q_len
+
+        self.x_prev = x_hat
+        self.dx_prev = dx_hat
+        self.t_prev = t
+
+        return x_hat[:3], x_hat[3:]
+
+    def _smoothing_factor(self, t_e, cutoff):
+        r = 2 * np.pi * cutoff * t_e
+        return r / (r + 1)
+
+    def _exponential_smoothing(self, a, x, x_prev):
+        return a * x + (1 - a) * x_prev
 
 
 

@@ -3,15 +3,16 @@ import numpy as np
 import os
 import yaml
 import cvf
-from cvf import Camera, HarvesterCamera
+from cvf import Camera, HarvesterCamera, PoseFilter
 from collections import deque
+from scipy.spatial.transform import Rotation as R
 
 
 ARUCO_DETECT = False
 FAST_ARUCO_DETECT = False
 RECORD_DATASET = False # Flag for recording the calibration dataset (snapshot by pressing the "s" key)
-ROBOT_TRACKING = False
-MULTI_ROI = True
+ROBOT_TRACKING = True
+MULTI_ROI = False
 
 # Params for fast marker detection
 ROI_SIZE = 1000 # Frame area to search
@@ -29,7 +30,7 @@ check_zone_centers = [
 ]
 
 # Dictionary for marker detection in the preview
-DICTIONARY = cv2.aruco.DICT_4X4_250
+DICTIONARY = cv2.aruco.DICT_4X4_100
 aruco_dict = cv2.aruco.getPredefinedDictionary(DICTIONARY)
 parameters = cv2.aruco.DetectorParameters()
 # parameters.adaptiveThreshWinSizeMin = 10
@@ -48,6 +49,7 @@ team = "blue"
 # team_enemy = "blue"
 camera_our = Camera(camera_stream_params_path, team)
 cap = HarvesterCamera(camera_stream_params_path, camera_cti_api_path)
+pose_filter = PoseFilter(min_cutoff=1.0, beta=1.0)
 # ===============================================================================
 
 # ============================== Camera params ==================================
@@ -251,30 +253,35 @@ def main():
 
                 # Calling a quick tracking function
                 results = camera_our.fast_robot_tracking(display_img)
+                tvec, quat, cov, corners, ids = results
+                tvec, quat = pose_filter.one_euro(tvec, quat)
+                euler = R.from_quat(quat).as_euler("xyz", True)
 
                 if results is not None:
-                    tvec = results[0]
-                    means, stds = cvf.calculate_moving_stats(tvec, tvec_history)
+                    # tvec = results[0]
+                    # means, stds = cvf.calculate_moving_stats(tvec, tvec_history)
 
-                    # Key points to check
-                    points = np.array([
-                    [-0.9, 0.4, 0.0], [0.9, 0.4, 0.0], [0.9, -0.4, 0.0], [-0.9, -0.4, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.02],
-                    [means[0], means[1], means[2]]
-                    ], dtype=np.float64)
+                    # # Key points to check
+                    # points = np.array([
+                    # [-0.9, 0.4, 0.0], [0.9, 0.4, 0.0], [0.9, -0.4, 0.0], [-0.9, -0.4, 0.0],
+                    # [0.0, 0.0, 0.0],
+                    # [0.0, 0.0, 0.02],
+                    # [means[0], means[1], means[2]]
+                    # ], dtype=np.float64)
                     
                     # Displaying points in the robot's coordinate system
                     # display_img = camera_our.project_3D_points_from_robot_to_image(display_img, points)
                     # Displaying points in the field coordinate system
-                    display_img = camera_our.project_3D_points_from_filed_to_image(display_img, points)
+                    # display_img = camera_our.project_3D_points_from_filed_to_image(display_img, points)
 
                     cv2.aruco.drawDetectedMarkers(display_img, results[3], results[4], (255, 255, 255))
 
                     np.set_printoptions(linewidth=300)
-                    print(f"raw: x={tvec[0]:.4f}, y={tvec[1]:.4f}, z={tvec[2]:.4f}")
-                    print(f"mean x={means[0]:.4f}, y={means[1]:.4f}, z={means[2]:.4f}")
-                    print(f"sigma_x={stds[0]:.4f}, sigma_y={stds[1]:.4f}, sigma_z={stds[2]:.4f}")
+                    print(f"tvec: x={tvec[0]:.4f}, y={tvec[1]:.4f}, z={tvec[2]:.4f}")
+                    print(f"quat: x={quat[0]:.4f}, y={quat[1]:.4f}, z={quat[2]:.4f}, w={quat[3]:.4f}")
+                    print(f"euler: x={euler[0]:.4f}, y={euler[1]:.4f}, z={euler[2]:.4f}")
+                    # print(f"mean x={means[0]:.4f}, y={means[1]:.4f}, z={means[2]:.4f}")
+                    # print(f"sigma_x={stds[0]:.4f}, sigma_y={stds[1]:.4f}, sigma_z={stds[2]:.4f}")
                     print("Covariance matrix:\n", results[2])
             # =================================================================================
 

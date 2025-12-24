@@ -4,7 +4,7 @@ camera_stream_params:
   fps: 30.0
   auto_exposure: [32, 16500]
   auto_gain: [0.0, 23.5]
-  black_level: 325
+  black_level: 320
   gamma: 0.6
   kannala_brandt:
     distortion_coeffs: [0.25636616488811637, 0.15908932236562742, 0.1411808890379291,
