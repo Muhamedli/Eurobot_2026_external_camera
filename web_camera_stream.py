@@ -34,10 +34,10 @@ count = 0
 
 # Initializing the camera
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*camera_params['format']))
+cap.set(cv2.CAP_PROP_FPS, camera_params['fps'])
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_params['width'])
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_params['height'])
-cap.set(cv2.CAP_PROP_FPS, camera_params['fps'])
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*camera_params['format']))
 
 # Initializing a queue for storing frame time
 frame_times = deque(maxlen=6)
