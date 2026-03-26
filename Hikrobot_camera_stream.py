@@ -253,24 +253,26 @@ def main():
 
                 # Calling a quick tracking function
                 results = camera_our.fast_robot_tracking(display_img)
-                tvec, quat, cov, corners, ids = results
-                tvec, quat = pose_filter.one_euro(tvec, quat)
-                euler = R.from_quat(quat).as_euler("xyz", True)
+                # euler = R.from_quat(quat).as_euler("xyz", True)
 
                 if results is not None:
-                    # tvec = results[0]
+                    tvec, quat, cov, corners, ids = results
+                    tvec, quat = pose_filter.one_euro(tvec, quat)
                     # means, stds = cvf.calculate_moving_stats(tvec, tvec_history)
 
-                    # # Key points to check
-                    # points = np.array([
-                    # [-0.9, 0.4, 0.0], [0.9, 0.4, 0.0], [0.9, -0.4, 0.0], [-0.9, -0.4, 0.0],
-                    # [0.0, 0.0, 0.0],
-                    # [0.0, 0.0, 0.02],
-                    # [means[0], means[1], means[2]]
-                    # ], dtype=np.float64)
+                    # Key points to check
+                    points = np.array([
+                        [0.0, 0.0, 0.0],
+                        [0.05, 0.0, -0.058],
+                        [0.0, -0.05, -0.058],
+                        [-0.05, 0.0, -0.058],
+                        [0.0, 0.05, -0.058],
+                        [-0.0474, -0.106, -0.28],
+                        [-0.0474, 0.106, -0.28],
+                    ], dtype=np.float64)
                     
                     # Displaying points in the robot's coordinate system
-                    # display_img = camera_our.project_3D_points_from_robot_to_image(display_img, points)
+                    display_img = camera_our.project_3D_points_from_robot_to_image(display_img, points)
                     # Displaying points in the field coordinate system
                     # display_img = camera_our.project_3D_points_from_filed_to_image(display_img, points)
 
@@ -279,7 +281,7 @@ def main():
                     np.set_printoptions(linewidth=300)
                     print(f"tvec: x={tvec[0]:.4f}, y={tvec[1]:.4f}, z={tvec[2]:.4f}")
                     print(f"quat: x={quat[0]:.4f}, y={quat[1]:.4f}, z={quat[2]:.4f}, w={quat[3]:.4f}")
-                    print(f"euler: x={euler[0]:.4f}, y={euler[1]:.4f}, z={euler[2]:.4f}")
+                    # print(f"euler: x={euler[0]:.4f}, y={euler[1]:.4f}, z={euler[2]:.4f}")
                     # print(f"mean x={means[0]:.4f}, y={means[1]:.4f}, z={means[2]:.4f}")
                     # print(f"sigma_x={stds[0]:.4f}, sigma_y={stds[1]:.4f}, sigma_z={stds[2]:.4f}")
                     print("Covariance matrix:\n", results[2])

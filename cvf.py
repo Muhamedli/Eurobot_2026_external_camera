@@ -4,7 +4,9 @@ import yaml
 from scipy.spatial.transform import Rotation as R
 from harvesters.core import Harvester
 from typing import Tuple, Deque, List
+from collections import deque
 import time
+
 
 def read_config(config_path):
     with open(config_path, 'r') as file:
@@ -19,48 +21,39 @@ def gamma_correction(image, gamma=0.5):
     return adjusted_image
 
 def calculate_moving_stats(
-    new_tvec: List[float], 
+    vec: List[float], 
     history_deque: Deque[List[float]]
-) -> Tuple[tuple, tuple]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Рассчитывает скользящее среднее и СКО для выборки.
 
-    Эта функция МОДИФИЦИРУЕТ 'history_deque', переданный ей.
-
     Args:
-        new_tvec (List[float]): Новый вектор [x, y, z].
-        history_deque (Deque): Deque (из collections) с maxlen=10,
-                               хранящий историю векторов.
+        vec (List[float]): список с данными: [x, y, z].
+        history_deque (Deque): очередь для формирования выборки.
 
     Returns:
-        Tuple[tuple, tuple]: Кортеж из двух кортежей:
-        ((mean_x, mean_y, mean_z), (std_x, std_y, std_z))
+        Tuple[np.ndarray, np.ndarray]: Кортеж из двух массивов: (means, stds)
     """
     
     # Добавляем новый вектор в историю
-    if len(new_tvec) == 3:
-        history_deque.append(new_tvec)
-    
-    # Конвертируем историю (deque из списков) в NumPy массив
+    history_deque.append(vec)
     data = np.array(history_deque)
-    
+
     n = len(history_deque)
     
     if n == 0:
-        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        return np.zeros(3), np.zeros(3)
 
-    # Рассчитываем среднее по столбцам (axis=0)
+    # Рассчитываем среднее по столбцам
     means = np.mean(data, axis=0)
     
     # Рассчитываем СКО
     if n < 2:
-        # Нельзя рассчитать СКО для 1 элемента (деление на n-1 будет делением на 0)
-        stds = np.array([0.0, 0.0, 0.0])
+        stds = np.zeros(3)
     else:
-        # ddof=1 использует N-1 (СКО для *выборки*), а не N
         stds = np.std(data, axis=0, ddof=1)
         
-    return tuple(means), tuple(stds)
+    return means, stds
 
 def adjoint_SE3(R, t):
     """Adjoint matrix for SE(3) transform [R,t]."""
@@ -118,36 +111,53 @@ class Camera:
         self.prev_center = None
         self.current_target_aruco = None
 
+        # Очередь для расчета СКО
+        self.tvec_history = deque(maxlen=3)
+        self.yaw_history = deque(maxlen=3)
+
+        # Параметры ковариации
+        self.cov = np.zeros((6, 6), dtype=np.float64)
+        self.base_pos_cov = 0.0001
+        self.base_ang_cov = 0.0012
+
         # Параметры, зависящие от команды
         if team == "yellow":
             self.colour_range = range(6, 11)
-            self.roi_center_aruco_list = [6, 74, 75, 76, 77]
+            self.roi_center_aruco_list = [6, 74, 75, 76, 77, 78, 79]
             self.RotSideDict = {
                 74: R.from_euler('y', 90, degrees=True).as_matrix(),
                 75: R.from_euler('x', 90, degrees=True).as_matrix(),
                 76: R.from_euler('y', -90, degrees=True).as_matrix(),
-                77: R.from_euler('x', -90, degrees=True).as_matrix()
+                77: R.from_euler('x', -90, degrees=True).as_matrix(),
+                78: R.from_euler('xz', [90, -30], degrees=True).as_matrix(),
+                79: R.from_euler('xz', [90, -150], degrees=True).as_matrix(),
             }
             self.TvecSideDict = {
                 74: np.array([-0.05, 0.0, 0.058]),
                 75: np.array([0.0, 0.05, 0.058]),
                 76: np.array([0.05, 0.0, 0.058]),
-                77: np.array([0.0, -0.05, 0.058])
+                77: np.array([0.0, -0.05, 0.058]),
+                78: np.array([0.0474, 0.106, 0.28]),
+                79: np.array([0.0474, -0.106, 0.28]),
             }
         else: # team == "blue"
             self.colour_range = range(1, 6)
-            self.roi_center_aruco_list = [2, 55, 56, 57, 58]
+            self.roi_center_aruco_list = [2, 55, 56, 57, 58, 59, 60]
             self.RotSideDict = {
                 55: R.from_euler('y', 90, degrees=True).as_matrix(),
                 56: R.from_euler('x', 90, degrees=True).as_matrix(),
                 57: R.from_euler('y', -90, degrees=True).as_matrix(),
-                58: R.from_euler('x', -90, degrees=True).as_matrix()
+                58: R.from_euler('x', -90, degrees=True).as_matrix(),
+                59: R.from_euler('xz', [90, -30], degrees=True).as_matrix(),
+                60: R.from_euler('xz', [90, -150], degrees=True).as_matrix(),
             }
             self.TvecSideDict = {
                 55: np.array([-0.05, 0.0, 0.058]),
                 56: np.array([0.0, 0.05, 0.058]),
                 57: np.array([0.05, 0.0, 0.058]),
-                58: np.array([0.0, -0.05, 0.058])
+                58: np.array([0.0, -0.05, 0.058]),
+                59: np.array([0.0474, 0.106, 0.28]),
+                60: np.array([0.0474, -0.106, 0.28]),
             }
         
         # Координаты маркеров поля
@@ -213,9 +223,9 @@ class Camera:
                 field_corners.append(corners[i][0])
                 field_ids.append(marker_id)
         
-        # Проверка полноты (нужно 4 маркера)
-        if len(field_ids) < 4:
-            print(f"Detected {len(field_ids)} markers out of 4") # Можно раскомментировать для отладки
+        # Проверка полноты (нужно 3 маркера)
+        if len(field_ids) < 3:
+            # print(f"Detected {len(field_ids)} markers out of 4") # Можно раскомментировать для отладки
             return False
 
         object_points, image_points = [], []
@@ -235,7 +245,7 @@ class Camera:
         if success:
             self.init_tmatrices.append(cv2.Rodrigues(rvec)[0])
             self.init_tvecs.append(tvec.flatten())
-            print(f"Init progress: {len(self.init_tmatrices)}/{num_frames}")
+            # print(f"Init progress: {len(self.init_tmatrices)}/{num_frames}")
 
         # ПРОВЕРКА: Набрали ли достаточно кадров?
         if len(self.init_tmatrices) >= num_frames:
@@ -254,7 +264,7 @@ class Camera:
             self.init_tmatrices = []
             self.init_tvecs = []
             
-            print("Field pose initialization successful!")
+            # print("Field pose initialization successful!")
             return True
 
         return False
@@ -350,6 +360,7 @@ class Camera:
         object_points, image_points = [], []
         for mid, corners_set in zip(robot_ids, robot_corners):
             if 1 <= mid <= 10: marker_length = 0.07
+            elif mid in [59, 60, 78, 79]: marker_length = 0.08
             else: marker_length = 0.05
             
             obj_pts = np.array([
@@ -383,6 +394,9 @@ class Camera:
         self.robot_rot_matrix = np.dot(self.tmatrix_field.T, rot_matrix)
         quat = R.from_matrix(self.robot_rot_matrix).as_quat()
 
+        r_temp = R.from_matrix(self.robot_rot_matrix)
+        current_euler = r_temp.as_euler('xyz', degrees=False)
+
         if cov_flag:
             # Рассчитываем ковариацию в системе координат камеры
             Sigma_cam = compute_pose_covariance(
@@ -406,9 +420,27 @@ class Camera:
                 t_field_to_cam
             )
         else:
-            cov = np.zeros((6, 6), dtype=np.float64)
+            _, pose_stds = calculate_moving_stats(self.robot_tvec.tolist(), self.tvec_history)
+            _, ang_std = calculate_moving_stats(current_euler[1], self.yaw_history)
 
-        return self.robot_tvec, quat, cov
+            if len(self.tvec_history) >= 2:
+                k_gain_pose = 5.0
+                k_gain_ang = 5.0
+                
+                self.cov[0, 0] = self.base_pos_cov + (pose_stds[0]**2) * k_gain_pose
+                self.cov[1, 1] = self.base_pos_cov + (pose_stds[1]**2) * k_gain_pose
+                self.cov[2, 2] = self.base_pos_cov + (pose_stds[2]**2) * k_gain_pose
+                
+                ang_cov = self.base_ang_cov + (ang_std**2) * k_gain_ang
+                
+                self.cov[3, 3] = ang_cov
+                self.cov[4, 4] = ang_cov
+                self.cov[5, 5] = ang_cov
+            else:
+                self.cov.flat[0:15:7] = self.base_pos_cov
+                self.cov.flat[21:36:7] = self.base_ang_cov
+
+        return self.robot_tvec, quat, self.cov
 
     def fast_robot_tracking(self, img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, list, np.ndarray] | None:
         """
@@ -540,11 +572,9 @@ class Camera:
             roi_size (int): размер ROI в пикселях.
 
         Returns:
-            tuple: Кортеж, содержащий:
-            - image (np.ndarray): Изображение с ROI областями и отображением очков.
-            - updated_zones (dict): Словарь формата:
+            updated_zones (dict): Словарь формата:
                 - ключ: xyz координаты ROI области.
-                - значение: кол-во очков .
+                - значение: кол-во очков (our_score, enemy_score).
         """
         MEMORY_LIMIT = 90   # Буфер для памяти маркеров
         DIST_THRESHOLD = 10 # Разрешающая способность для различения маркеров
@@ -668,12 +698,12 @@ class Camera:
 
                 updated_zones[pt_3d] = [our_score, enemy_score]
 
-                cv2.rectangle(image, (x_start, y_start), (x_end, y_end), (255, 255, 255), 1)
-                score_text = f"{team_color} vs enemy: {our_score} vs {enemy_score}"
-                cv2.putText(image, score_text, (x_start, y_start-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                cv2.circle(image, center_2d, 2, (255, 255, 255), -1)
+                # cv2.rectangle(image, (x_start, y_start), (x_end, y_end), (255, 255, 255), 1)
+                # score_text = f"{team_color} vs enemy: {our_score} vs {enemy_score}"
+                # cv2.putText(image, score_text, (x_start, y_start-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                # cv2.circle(image, center_2d, 2, (255, 255, 255), -1)
 
-        return image, updated_zones
+        return updated_zones
 
 
 
