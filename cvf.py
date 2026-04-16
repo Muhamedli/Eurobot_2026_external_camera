@@ -91,7 +91,7 @@ def transform_covariance_SE3(Sigma_source, R_src_dst, t_src_dst):
 
 
 class Camera:
-    def __init__(self, config_path: str, team: str, roi_size: int = 1000):
+    def __init__(self, config_path: str, team: str, roi_size: int = 1000, aruco_cube: bool = False):
         # Инициализация параметров из конфига
         self.config = read_config(config_path)
         self.camera_matrix = np.array(self.config['camera_stream_params']['radial_tangential']['intrinsics'], dtype=np.float64)
@@ -120,6 +120,9 @@ class Camera:
         self.base_pos_cov = 0.0001
         self.base_ang_cov = 0.0012
 
+        # Добавляем оффсет, если установлен aruco-cube
+        cube_offset = 0.085 if aruco_cube else 0.0
+
         # Параметры, зависящие от команды
         if team == "yellow":
             self.colour_range = range(6, 11)
@@ -133,12 +136,12 @@ class Camera:
                 79: R.from_euler('xz', [90, -150], degrees=True).as_matrix(),
             }
             self.TvecSideDict = {
-                74: np.array([-0.05, 0.0, 0.058]),
-                75: np.array([0.0, 0.05, 0.058]),
-                76: np.array([0.05, 0.0, 0.058]),
-                77: np.array([0.0, -0.05, 0.058]),
-                78: np.array([0.0474, 0.106, 0.28]),
-                79: np.array([0.0474, -0.106, 0.28]),
+                74: np.array([-0.05, 0.0, 0.058 + cube_offset]),
+                75: np.array([0.0, 0.05, 0.058 + cube_offset]),
+                76: np.array([0.05, 0.0, 0.058 + cube_offset]),
+                77: np.array([0.0, -0.05, 0.058 + cube_offset]),
+                78: np.array([0.0474, 0.106, 0.28 + cube_offset]),
+                79: np.array([0.0474, -0.106, 0.28 + cube_offset]),
             }
         else: # team == "blue"
             self.colour_range = range(1, 6)
@@ -152,12 +155,12 @@ class Camera:
                 60: R.from_euler('xz', [90, -150], degrees=True).as_matrix(),
             }
             self.TvecSideDict = {
-                55: np.array([-0.05, 0.0, 0.058]),
-                56: np.array([0.0, 0.05, 0.058]),
-                57: np.array([0.05, 0.0, 0.058]),
-                58: np.array([0.0, -0.05, 0.058]),
-                59: np.array([0.0474, 0.106, 0.28]),
-                60: np.array([0.0474, -0.106, 0.28]),
+                55: np.array([-0.05, 0.0, 0.058 + cube_offset]),
+                56: np.array([0.0, 0.05, 0.058 + cube_offset]),
+                57: np.array([0.05, 0.0, 0.058 + cube_offset]),
+                58: np.array([0.0, -0.05, 0.058 + cube_offset]),
+                59: np.array([0.0474, 0.106, 0.28 + cube_offset]),
+                60: np.array([0.0474, -0.106, 0.28 + cube_offset]),
             }
         
         # Координаты маркеров поля
@@ -224,7 +227,7 @@ class Camera:
                 field_ids.append(marker_id)
         
         # Проверка полноты (нужно 3 маркера)
-        if len(field_ids) < 3:
+        if len(field_ids) < 2:
             # print(f"Detected {len(field_ids)} markers out of 4") # Можно раскомментировать для отладки
             return False
 
@@ -576,7 +579,7 @@ class Camera:
                 - ключ: xyz координаты ROI области.
                 - значение: кол-во очков (our_score, enemy_score).
         """
-        MEMORY_LIMIT = 90   # Буфер для памяти маркеров
+        MEMORY_LIMIT = 30   # Буфер для памяти маркеров
         DIST_THRESHOLD = 10 # Разрешающая способность для различения маркеров
 
         if team_color == 'yellow':
@@ -610,13 +613,9 @@ class Camera:
 
                 corners, ids, rejected = self.detector.detectMarkers(roi)
                 
-                # Подготавливаем список обнаруженных сейчас объектов: [{'id': 36, 'center': (x,y)}, ...]
                 current_detections = []
+                
                 if ids is not None:
-                    offset = np.array([x_start, y_start])
-                    global_corners_list = [c + offset for c in corners]
-                    cv2.aruco.drawDetectedMarkers(image, global_corners_list, ids, (255, 255, 255))
-                    
                     ids_flat = ids.flatten()
                     for i, mid in enumerate(ids_flat):
                         c = corners[i][0]
@@ -698,10 +697,129 @@ class Camera:
 
                 updated_zones[pt_3d] = [our_score, enemy_score]
 
-                # cv2.rectangle(image, (x_start, y_start), (x_end, y_end), (255, 255, 255), 1)
-                # score_text = f"{team_color} vs enemy: {our_score} vs {enemy_score}"
-                # cv2.putText(image, score_text, (x_start, y_start-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                # cv2.circle(image, center_2d, 2, (255, 255, 255), -1)
+        return updated_zones
+
+    def pantry_checker_dominance(self, team_color, image, zones_3d_dict, roi_size=200):
+        """
+        Осматривает кладовые-ROI и определяет доминирование.
+
+        Args:
+            team_color (str): 'yellow' или 'blue'.
+            image (np.ndarray): исходное изображение.
+            zones_3d_dict (list): список xyz координат центров зон.
+            roi_size (int): размер ROI в пикселях.
+
+        Returns:
+            updated_zones (dict): Словарь формата:
+                - ключ: xyz координаты ROI области.
+                - значение: 0 (наше доминирование), 1 (доминирование противника), -1 (ничья/пусто).
+        """
+        MEMORY_LIMIT = 30   # Буфер для памяти маркеров
+        DIST_THRESHOLD = 10 # Разрешающая способность для различения маркеров
+
+        if team_color == 'yellow':
+            target_id = 47
+            opponent_id = 36
+        else:  # 'blue'
+            target_id = 36
+            opponent_id = 47
+
+        rvec, _ = cv2.Rodrigues(self.tmatrix_field)
+        tvec = self.tvec_cam_to_field
+
+        updated_zones = {}
+
+        for center_3d_key in zones_3d_dict:
+            x, y, z = center_3d_key
+            
+            points_to_check = [(x, y, z)]
+            if abs(x) > 0.0:
+                points_to_check.append((-x, y, z))
+            
+            for pt_3d in points_to_check:
+                pt_3d_np = np.array([pt_3d], dtype=np.float64)
+                img_pts, _ = cv2.projectPoints(
+                    pt_3d_np, rvec, tvec, self.camera_matrix, self.dist_coefs
+                )
+                center_2d = tuple(img_pts[0][0].astype(int))
+                
+                roi, coords = self.get_roi(image, center_2d, roi_size)
+                x_start, y_start, x_end, y_end = coords
+
+                corners, ids, rejected = self.detector.detectMarkers(roi)
+                
+                current_detections = []
+
+                if ids is not None:
+                    ids_flat = ids.flatten()
+                    for i, mid in enumerate(ids_flat):
+                        c = corners[i][0]
+                        cx = int(np.mean(c[:, 0])) + x_start
+                        cy = int(np.mean(c[:, 1])) + y_start
+                        current_detections.append({'id': mid, 'center': (cx, cy)})
+
+                if pt_3d not in self.zone_states:
+                    self.zone_states[pt_3d] = []
+                
+                tracked_markers = self.zone_states[pt_3d]
+                
+                for tm in tracked_markers:
+                    tm['updated_this_frame'] = False
+
+                for det in current_detections:
+                    matched = False
+                    best_dist = float('inf')
+                    best_idx = -1
+                    
+                    for i, tm in enumerate(tracked_markers):
+                        if tm['id'] == det['id']:
+                            dist = np.linalg.norm(np.array(det['center']) - np.array(tm['center']))
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_idx = i
+                    
+                    if best_idx != -1 and best_dist < DIST_THRESHOLD:
+                        tracked_markers[best_idx]['center'] = det['center']
+                        tracked_markers[best_idx]['lost_frames'] = 0
+                        tracked_markers[best_idx]['updated_this_frame'] = True
+                        matched = True
+                    
+                    if not matched:
+                        tracked_markers.append({
+                            'id': det['id'],
+                            'center': det['center'],
+                            'lost_frames': 0,
+                            'updated_this_frame': True
+                        })
+
+                new_tracked_list = []
+                for tm in tracked_markers:
+                    if not tm.get('updated_this_frame', False):
+                        tm['lost_frames'] += 1
+                    
+                    if tm['lost_frames'] < MEMORY_LIMIT:
+                        new_tracked_list.append(tm)
+                
+                self.zone_states[pt_3d] = new_tracked_list
+
+                my_count = 0
+                opponent_count = 0
+                
+                for tm in new_tracked_list:
+                    mid = tm['id']
+                    if mid == target_id:
+                        my_count += 1
+                    elif mid == opponent_id:
+                        opponent_count += 1
+                
+                if my_count > opponent_count:
+                    dominance = 0
+                elif opponent_count > my_count:
+                    dominance = 1
+                else:
+                    dominance = -1
+                
+                updated_zones[pt_3d] = dominance
 
         return updated_zones
 
