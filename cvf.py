@@ -594,34 +594,27 @@ class Camera:
 
         updated_zones = {}
 
-        for center_3d_key in zones_3d_dict:
-            x, y, z = center_3d_key
-            
-            points_to_check = [(x, y, z)]
-            if abs(x) > 0.0:
-                points_to_check.append((-x, y, z))
-            
-            for pt_3d in points_to_check:
-                pt_3d_np = np.array([pt_3d], dtype=np.float64)
-                img_pts, _ = cv2.projectPoints(
+        for pt_3d in zones_3d_dict:
+            pt_3d_np = np.array([pt_3d], dtype=np.float64)
+            img_pts, _ = cv2.projectPoints(
                     pt_3d_np, rvec, tvec, self.camera_matrix, self.dist_coefs
                 )
-                center_2d = tuple(img_pts[0][0].astype(int))
-                
-                roi, coords = self.get_roi(image, center_2d, roi_size)
-                x_start, y_start, x_end, y_end = coords
+            center_2d = tuple(img_pts[0][0].astype(int))
+            
+            roi, coords = self.get_roi(image, center_2d, roi_size)
+            x_start, y_start, x_end, y_end = coords
 
-                corners, ids, rejected = self.detector.detectMarkers(roi)
+            corners, ids, rejected = self.detector.detectMarkers(roi)
                 
-                current_detections = []
+            current_detections = []
                 
-                if ids is not None:
-                    ids_flat = ids.flatten()
-                    for i, mid in enumerate(ids_flat):
-                        c = corners[i][0]
-                        cx = int(np.mean(c[:, 0])) + x_start
-                        cy = int(np.mean(c[:, 1])) + y_start
-                        current_detections.append({'id': mid, 'center': (cx, cy)})
+            if ids is not None:
+                ids_flat = ids.flatten()
+                for i, mid in enumerate(ids_flat):
+                    c = corners[i][0]
+                    cx = int(np.mean(c[:, 0])) + x_start
+                    cy = int(np.mean(c[:, 1])) + y_start
+                    current_detections.append({'id': mid, 'center': (cx, cy)})
 
                 if pt_3d not in self.zone_states:
                     self.zone_states[pt_3d] = []
@@ -729,97 +722,90 @@ class Camera:
 
         updated_zones = {}
 
-        for center_3d_key in zones_3d_dict:
-            x, y, z = center_3d_key
-            
-            points_to_check = [(x, y, z)]
-            if abs(x) > 0.0:
-                points_to_check.append((-x, y, z))
-            
-            for pt_3d in points_to_check:
-                pt_3d_np = np.array([pt_3d], dtype=np.float64)
-                img_pts, _ = cv2.projectPoints(
-                    pt_3d_np, rvec, tvec, self.camera_matrix, self.dist_coefs
-                )
-                center_2d = tuple(img_pts[0][0].astype(int))
-                
-                roi, coords = self.get_roi(image, center_2d, roi_size)
-                x_start, y_start, x_end, y_end = coords
+        for pt_3d in zones_3d_dict:
+            pt_3d_np = np.array([pt_3d], dtype=np.float64)
+            img_pts, _ = cv2.projectPoints(
+                pt_3d_np, rvec, tvec, self.camera_matrix, self.dist_coefs
+            )
+            center_2d = tuple(img_pts[0][0].astype(int))
 
-                corners, ids, rejected = self.detector.detectMarkers(roi)
-                
-                current_detections = []
+            roi, coords = self.get_roi(image, center_2d, roi_size)
+            x_start, y_start, x_end, y_end = coords
 
-                if ids is not None:
-                    ids_flat = ids.flatten()
-                    for i, mid in enumerate(ids_flat):
-                        c = corners[i][0]
-                        cx = int(np.mean(c[:, 0])) + x_start
-                        cy = int(np.mean(c[:, 1])) + y_start
-                        current_detections.append({'id': mid, 'center': (cx, cy)})
+            corners, ids, rejected = self.detector.detectMarkers(roi)
 
-                if pt_3d not in self.zone_states:
-                    self.zone_states[pt_3d] = []
-                
-                tracked_markers = self.zone_states[pt_3d]
-                
-                for tm in tracked_markers:
-                    tm['updated_this_frame'] = False
+            current_detections = []
 
-                for det in current_detections:
-                    matched = False
-                    best_dist = float('inf')
-                    best_idx = -1
-                    
-                    for i, tm in enumerate(tracked_markers):
-                        if tm['id'] == det['id']:
-                            dist = np.linalg.norm(np.array(det['center']) - np.array(tm['center']))
-                            if dist < best_dist:
-                                best_dist = dist
-                                best_idx = i
-                    
-                    if best_idx != -1 and best_dist < DIST_THRESHOLD:
-                        tracked_markers[best_idx]['center'] = det['center']
-                        tracked_markers[best_idx]['lost_frames'] = 0
-                        tracked_markers[best_idx]['updated_this_frame'] = True
-                        matched = True
-                    
-                    if not matched:
-                        tracked_markers.append({
-                            'id': det['id'],
-                            'center': det['center'],
-                            'lost_frames': 0,
-                            'updated_this_frame': True
-                        })
+            if ids is not None:
+                ids_flat = ids.flatten()
+                for i, mid in enumerate(ids_flat):
+                    c = corners[i][0]
+                    cx = int(np.mean(c[:, 0])) + x_start
+                    cy = int(np.mean(c[:, 1])) + y_start
+                    current_detections.append({'id': mid, 'center': (cx, cy)})
 
-                new_tracked_list = []
-                for tm in tracked_markers:
-                    if not tm.get('updated_this_frame', False):
-                        tm['lost_frames'] += 1
-                    
-                    if tm['lost_frames'] < MEMORY_LIMIT:
-                        new_tracked_list.append(tm)
-                
-                self.zone_states[pt_3d] = new_tracked_list
+            if pt_3d not in self.zone_states:
+                self.zone_states[pt_3d] = []
 
-                my_count = 0
-                opponent_count = 0
-                
-                for tm in new_tracked_list:
-                    mid = tm['id']
-                    if mid == target_id:
-                        my_count += 1
-                    elif mid == opponent_id:
-                        opponent_count += 1
-                
-                if my_count > opponent_count:
-                    dominance = 0
-                elif opponent_count > my_count:
-                    dominance = 1
-                else:
-                    dominance = -1
-                
-                updated_zones[pt_3d] = dominance
+            tracked_markers = self.zone_states[pt_3d]
+
+            for tm in tracked_markers:
+                tm['updated_this_frame'] = False
+
+            for det in current_detections:
+                matched = False
+                best_dist = float('inf')
+                best_idx = -1
+
+                for i, tm in enumerate(tracked_markers):
+                    if tm['id'] == det['id']:
+                        dist = np.linalg.norm(np.array(det['center']) - np.array(tm['center']))
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_idx = i
+
+                if best_idx != -1 and best_dist < DIST_THRESHOLD:
+                    tracked_markers[best_idx]['center'] = det['center']
+                    tracked_markers[best_idx]['lost_frames'] = 0
+                    tracked_markers[best_idx]['updated_this_frame'] = True
+                    matched = True
+
+                if not matched:
+                    tracked_markers.append({
+                        'id': det['id'],
+                        'center': det['center'],
+                        'lost_frames': 0,
+                        'updated_this_frame': True
+                    })
+
+            new_tracked_list = []
+            for tm in tracked_markers:
+                if not tm.get('updated_this_frame', False):
+                    tm['lost_frames'] += 1
+
+                if tm['lost_frames'] < MEMORY_LIMIT:
+                    new_tracked_list.append(tm)
+
+            self.zone_states[pt_3d] = new_tracked_list
+
+            my_count = 0
+            opponent_count = 0
+
+            for tm in new_tracked_list:
+                mid = tm['id']
+                if mid == target_id:
+                    my_count += 1
+                elif mid == opponent_id:
+                    opponent_count += 1
+
+            if my_count > opponent_count:
+                dominance = 0
+            elif opponent_count > my_count:
+                dominance = 1
+            else:
+                dominance = -1
+
+            updated_zones[pt_3d] = dominance
 
         return updated_zones
 

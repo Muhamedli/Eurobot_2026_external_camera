@@ -299,7 +299,7 @@ def main():
                     else:
                         continue
                     
-                display_img, updated_scores = camera_our.pantry_checker_dominance(team, display_img, check_zone_centers, roi_size=250)
+                updated_scores = camera_our.pantry_checker_dominance(team, display_img, check_zone_centers, roi_size=250)
                 print(updated_scores)
             # =================================================================================
 
