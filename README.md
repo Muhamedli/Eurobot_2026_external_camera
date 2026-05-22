@@ -1,4 +1,4 @@
-# Eurobot 2026 External Camera
+# Eurobot 2026 external camera
 
 ![Field](docs/field.png)
 
@@ -20,7 +20,7 @@ You must have the following dependencies installed:
 * **NumPy** (`numpy`) – for matrix and array manipulations.
 * **PyYAML** (`PyYAML`) – for parsing configuration files.
 
-## Key Features
+## Key features
 
 This repository provides a comprehensive toolset for external camera processing, featuring the following key algorithms:
 
@@ -31,6 +31,27 @@ This repository provides a comprehensive toolset for external camera processing,
 * **Robust Pose Estimation**: Calculates the robot's coordinates and orientation (6D pose) by solving the **PnP** (Perspective-n-Point) problem based on the detected marker array.
 * **Automated Field Pose Initialization**: Determines the static camera-to-field transformation matrix by detecting fixed field markers and averaging iterative PnP results over multiple frames for high precision.
 * **Pantry State & Dominance Checker**: Automatically projects 3D pantry zone coordinates onto the 2D image plane to examine specific localized ROIs. It identifies scored elements inside the pantries, computes current scores, and determines zone dominance while utilizing a robust memory buffer to handle temporary marker tracking losses.
+
+## Calibration tool
+
+The repository includes a dedicated tool for calibrating your camera using a ChArUco board. It is located in the `calibration/` directory.
+
+### How to use
+1. **Place your images:** 
+   * Put the photos of your calibration board into the `calibration/calibration_dataset/` directory. 
+   * Alternatively, if you are using ROS 2, you can extract frames from a bag file (set `USING_ROS2_BAG = True` and configure `bag_file_path` and `TOPIC_TO_PARSE`).
+2. **Configure the board:** Adjust the parameters of your ChArUco board (dimensions, square size, marker size, dictionary) in `calibration/config/ChArUco_board.yaml`.
+3. **Run the script:** Execute `calibration/camera_calibration.py`.
+
+### Adjustable flags
+Inside the `camera_calibration.py` script, you can tweak several flags in the "Calibration configuration" section:
+* `DISPLAY_DETECTED_MARKERS`: `True`/`False` – show images with successfully detected markers during the process.
+* `DISPLAY_UNDISTORTED`: `True`/`False` – display the final undistorted images to verify calibration quality.
+* `USE_8_COEFFS`: `True`/`False` – use 8 distortion coefficients for the Radial-Tangential model (otherwise, 5 are used).
+* `USING_ROS2_BAG`: `True`/`False` – parse images directly from a ROS 2 bag file instead of the local folder.
+
+### Outputs
+Upon successful calibration, the intrinsic matrices and distortion coefficients for both Radial-Tangential and Kannala-Brandt models are automatically saved into `calibration/intrinsics/intrinsics.yaml`.
 
 ## Notes
 

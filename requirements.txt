@@ -1,0 +1,5 @@
+opencv-contrib-python
+harvesters
+scipy
+numpy
+PyYAML
