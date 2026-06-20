@@ -58,5 +58,3 @@ Upon successful calibration, the intrinsic matrices and distortion coefficients 
 In the final production implementation deployed on the robot, this camera solution was divided into two specialized packages to maximize performance:
 1. **C++ Package**: A highly optimized module dedicated exclusively to acquiring raw frames from the industrial camera and compressing them into JPEG format.
 2. **Python Package**: A higher-level logic module responsible for determining the pose (position and orientation) of our robot and the enemy robot, as well as checking the dominance of the wooden blocks on the playing field.
-
-***The entire code of the SCRAT Erobot 2026 project will be published in the repository: later...**
